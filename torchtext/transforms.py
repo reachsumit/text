@@ -286,13 +286,23 @@ class GPT2BPETokenizer(Module):
     :type vocab_bpe_path: str
     :param return_tokens: Indicate whether to return split tokens. If False, it will return encoded token IDs as strings (default: False)
     :type return_input: bool
+    :param never_split: Collection of tokens which will not be split during tokenization. (default: None)
+    :type never_split: Optional[List[str]]
     """
 
     __jit_unused_properties__ = ["is_jitable"]
     _seperator: torch.jit.Final[str]
 
-    def __init__(self, encoder_json_path: str, vocab_bpe_path: str, return_tokens: bool = False) -> None:
+    def __init__(
+        self,
+        encoder_json_path: str,
+        vocab_bpe_path: str,
+        return_tokens: bool = False,
+        never_split: Optional[List[str]] = None,
+    ) -> None:
         super().__init__()
+        if never_split is None:
+            never_split = []
         self._seperator = "\u0001"
         # load bpe encoder and bpe decoder
         with open(get_asset_local_path(encoder_json_path), "r", encoding="utf-8") as f:
@@ -304,9 +314,12 @@ class GPT2BPETokenizer(Module):
             self._seperator.join(merge_pair.split()): i for i, merge_pair in enumerate(bpe_vocab.split("\n")[1:-1])
         }
         # Caching is enabled in Eager mode
-        self.bpe = GPT2BPEEncoderPyBind(bpe_encoder, bpe_merge_ranks, self._seperator, bytes_to_unicode(), True)
+        self.bpe = GPT2BPEEncoderPyBind(
+            bpe_encoder, bpe_merge_ranks, self._seperator, bytes_to_unicode(), True, never_split
+        )
 
         self._return_tokens = return_tokens
+        self._never_split = never_split
 
     @property
     def is_jitable(self):
@@ -378,7 +391,12 @@ class GPT2BPETokenizer(Module):
             tokenizer_copy = deepcopy(self)
             # Disable caching in script mode
             tokenizer_copy.bpe = torch.classes.torchtext.GPT2BPEEncoder(
-                self.bpe.bpe_encoder_, self.bpe.bpe_merge_ranks_, self.bpe.seperator_, self.bpe.byte_encoder_, False
+                self.bpe.bpe_encoder_,
+                self.bpe.bpe_merge_ranks_,
+                self.bpe.seperator_,
+                self.bpe.byte_encoder_,
+                False,
+                self._never_split,
             )
             return tokenizer_copy
         return self

@@ -7,9 +7,45 @@
 #include <utility>
 
 namespace torchtext {
-const Regex kGPT2Regex(
-    "(\\'s|\\'t|\\'re|\\'ve|\\'m|\\'ll|\\'d| ?\\pL+|"
-    " ?\\pN+| ?[^\\s\\v\\pL\\pN]+|[\\s\\v]+)");
+// const Regex kGPT2Regex(
+//     "(\\'s|\\'t|\\'re|\\'ve|\\'m|\\'ll|\\'d| ?\\pL+|"
+//     " ?\\pN+| ?[^\\s\\v\\pL\\pN]+|[\\s\\v]+)");
+
+std::string get_regular_expression() {
+  std::string regular_expression = "(";
+  // Start with special tokens that are not to be split
+  for (auto token : bpe_never_split_set_) {
+    regular_expression +=
+        "\\[" + token.substr(1, token.length() - 2) + "\\]" + "|";
+  }
+  // Group for all contractions, such as: 's, 'll, 've etc.
+  std::string group1 = "\\'s|\\'t|\\'re|\\'ve|\\'m|\\'ll|\\'d|\\[|\\]";
+  // Group for any character in 'Letter' Unicode category
+  std::string group2 = " ?\\pL+";
+  // Group for any character in 'Number' Unicode category
+  std::string group3 = " ?\\pN+";
+  // Group for negated set
+  std::string group4;
+  if (bpe_never_split_set_.size() <= 0) {
+    group4 = " ?[^\\s\\v\\pL\\pN]+";
+  } else {
+    // Add the tokens that are not be spilt
+    group4 = " ?[^\\s\\v";
+    for (auto token : bpe_never_split_set_) {
+      group4 += "\\[" + token.substr(1, token.length() - 2) + "\\]";
+    }
+    group4 += "\\pL\\pN]+";
+  }
+  // Group for negative lookahead
+  std::string group5 = "[\\s\\v]+";
+
+  regular_expression +=
+      group1 + "|" + group2 + "|" + group3 + "|" + group4 + "|" + group5 + ")";
+
+  std::cout << "in function: " << regular_expression << std::endl;
+
+  return regular_expression;
+}
 
 bool is_whitespace(const std::string& input) {
   for (const char& c : input) {
@@ -63,8 +99,18 @@ std::vector<std::string> gpt2_bpe_pre_tokenizer(std::string input) {
   std::vector<std::string> tokens;
   re2::StringPiece inp(input);
   bool prepend_space = false;
+  std::string regular_expression = get_regular_expression();
+  std::cout << "doing pre-tok now for: " << input << std::endl;
+  std::cout << "regex: " << regular_expression << std::endl;
+  Regex kGPT2Regex(regular_expression);
+
   while (kGPT2Regex.FindAndConsume(&inp, &token)) {
-    if (is_whitespace(token)) {
+    std::cout << token << std::endl;
+    bool is_never_split_token =
+        bpe_never_split_set_.find(token) != bpe_never_split_set_.end();
+    if (is_never_split_token) {
+      tokens.push_back(token);
+    } else if (is_whitespace(token)) {
       prepend_space = false;
       if (inp.empty()) { // token is last token
         tokens.push_back(token);
@@ -85,6 +131,9 @@ std::vector<std::string> gpt2_bpe_pre_tokenizer(std::string input) {
       tokens.push_back(token);
     }
   }
+  std::cout << "pre-tok did this: " << std::endl;
+  for (auto test : tokens)
+    std::cout << test << std::endl;
   return tokens;
 }
 
@@ -141,32 +190,46 @@ GPT2BPEEncoder::GPT2BPEEncoder(
     const c10::Dict<std::string, int64_t>& bpe_merge_ranks,
     const std::string& seperator,
     const c10::Dict<int64_t, std::string>& byte_encoder,
-    bool caching_enabled)
+    bool caching_enabled,
+    const std::vector<std::string> never_split)
     : inf_(bpe_merge_ranks.size() + 1),
       bpe_encoder_(std::move(bpe_encoder)),
       bpe_merge_ranks_(std::move(bpe_merge_ranks)),
       byte_encoder_(std::move(byte_encoder)),
       seperator_(std::move(seperator)),
-      caching_enabled_(caching_enabled) {}
+      never_split_(never_split),
+      caching_enabled_(caching_enabled) {
+  bpe_never_split_set_.insert(never_split_.begin(), never_split_.end());
+}
 
 GPT2BPEEncoder::GPT2BPEEncoder(
     const std::unordered_map<std::string, int64_t>& bpe_encoder,
     const std::unordered_map<std::string, int64_t>& bpe_merge_ranks,
     const std::string& seperator,
     const std::unordered_map<int64_t, std::string>& byte_encoder,
-    bool caching_enabled)
+    bool caching_enabled,
+    const std::vector<std::string> never_split)
     : GPT2BPEEncoder(
           _map_to_c10_dict<std::string, int64_t>(bpe_encoder),
           _map_to_c10_dict<std::string, int64_t>(bpe_merge_ranks),
           seperator,
           _map_to_c10_dict<int64_t, std::string>(byte_encoder),
-          caching_enabled) {}
+          caching_enabled,
+          never_split) {
+  bpe_never_split_set_.insert(never_split_.begin(), never_split_.end());
+}
 
-std::vector<std::string> GPT2BPEEncoder::ByteEncode_(std::string token) {
+std::vector<std::string> GPT2BPEEncoder::ByteEncode_(
+    std::string token,
+    bool is_never_split_token) {
   // Equivalent to: (self.byte_encoder[b] for b in token.encode('utf-8')
   std::vector<std::string> encoded;
-  for (auto& ch : token) {
-    encoded.push_back(byte_encoder_.at((unsigned char)ch));
+  if (is_never_split_token) {
+    encoded.push_back(token);
+  } else {
+    for (auto& ch : token) {
+      encoded.push_back(byte_encoder_.at((unsigned char)ch));
+    }
   }
   return encoded;
 }
@@ -270,9 +333,15 @@ std::vector<std::string> GPT2BPEEncoder::PreTokenize_(std::string input) {
 
 std::vector<int64_t> GPT2BPEEncoder::Encode(const std::string& text) {
   std::vector<int64_t> bpe_token_ids;
+  std::cout << "1 whole thing: " << text << std::endl;
+
   for (const auto& token : PreTokenize_(text)) {
-    auto byte_encoded_token = ByteEncode_(token);
+    bool is_never_split_token =
+        bpe_never_split_set_.find(token) != bpe_never_split_set_.end();
+    auto byte_encoded_token = ByteEncode_(token, is_never_split_token);
+    std::cout << "2 post-tok byte-encoded: " << byte_encoded_token << std::endl;
     for (const auto& bpe_token : BPE_(byte_encoded_token)) {
+      std::cout << "3 final bpe version: " << bpe_token << std::endl;
       bpe_token_ids.push_back(bpe_encoder_.at(bpe_token));
     }
   }
@@ -281,12 +350,20 @@ std::vector<int64_t> GPT2BPEEncoder::Encode(const std::string& text) {
 
 std::vector<std::string> GPT2BPEEncoder::Tokenize(const std::string& text) {
   std::vector<std::string> bpe_tokens;
+  // std::cout << "1 whole thing: " << text << std::endl;
   for (const auto& token : PreTokenize_(text)) {
-    auto byte_encoded_token = ByteEncode_(token);
+    bool is_never_split_token =
+        bpe_never_split_set_.find(token) != bpe_never_split_set_.end();
+    auto byte_encoded_token = ByteEncode_(token, is_never_split_token);
+    std::cout << "2 post-tok byte-encoded: " << byte_encoded_token << std::endl;
     for (const auto& bpe_token : BPE_(byte_encoded_token)) {
+      // std::cout << "3 bpe_token: " << bpe_token << std::endl;
+      // std::cout << "3 final bpe version: " << bpe_token << std::endl;
       bpe_tokens.push_back(bpe_token);
     }
   }
+  // for (auto test : bpe_tokens)
+  // std::cout << "4 in list: " << test << std::endl;
   return bpe_tokens;
 }
 
@@ -311,7 +388,8 @@ GPT2BPEEncoderStatesPybind _serialize_gpt2_bpe_encoder_pybind(
       self->GetBPEMergeRanks(),
       self->seperator_,
       self->GetByteEncoder(),
-      self->caching_enabled_);
+      self->caching_enabled_,
+      self->never_split_);
 }
 
 GPT2BPEEncoderStatesTorchbind _serialize_gpt2_bpe_encoder_torchbind(
@@ -321,37 +399,40 @@ GPT2BPEEncoderStatesTorchbind _serialize_gpt2_bpe_encoder_torchbind(
       self->bpe_merge_ranks_,
       self->seperator_,
       self->byte_encoder_,
-      self->caching_enabled_);
+      self->caching_enabled_,
+      self->never_split_);
 }
 
 c10::intrusive_ptr<GPT2BPEEncoder> _deserialize_gpt2_bpe_encoder_pybind(
     GPT2BPEEncoderStatesPybind states) {
   auto state_size = std::tuple_size<decltype(states)>::value;
   TORCH_CHECK(
-      state_size == 5,
-      "Expected deserialized GPT2BPEEncoder to have 5 states but found " +
+      state_size == 6,
+      "Expected deserialized GPT2BPEEncoder to have 6 states but found " +
           std::to_string(state_size) + " states");
   return c10::make_intrusive<GPT2BPEEncoder>(
       std::move(std::get<0>(states)),
       std::move(std::get<1>(states)),
       std::get<2>(states),
       std::move(std::get<3>(states)),
-      std::get<4>(states));
+      std::get<4>(states),
+      std::get<5>(states));
 }
 
 c10::intrusive_ptr<GPT2BPEEncoder> _deserialize_gpt2_bpe_encoder_torchbind(
     GPT2BPEEncoderStatesTorchbind states) {
   auto state_size = std::tuple_size<decltype(states)>::value;
   TORCH_CHECK(
-      state_size == 5,
-      "Expected deserialized GPT2BPEEncoder to have 5 states but found " +
+      state_size == 6,
+      "Expected deserialized GPT2BPEEncoder to have 6 states but found " +
           std::to_string(state_size) + " states");
   return c10::make_intrusive<GPT2BPEEncoder>(
       std::move(std::get<0>(states)),
       std::move(std::get<1>(states)),
       std::get<2>(states),
       std::move(std::get<3>(states)),
-      std::get<4>(states));
+      std::get<4>(states),
+      std::get<5>(states));
 }
 
 } // namespace torchtext

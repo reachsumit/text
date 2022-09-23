@@ -5,19 +5,23 @@
 #include <torchtext/csrc/export.h>
 
 #include <cstdint>
+#include <set>
 #include <string>
 #include <tuple>
 #include <unordered_map>
 #include <vector>
 
 namespace torchtext {
+// set to store tokens that are not to be split
+static std::set<std::string> bpe_never_split_set_;
 
 typedef std::tuple<
     std::unordered_map<std::string, int64_t>,
     std::unordered_map<std::string, int64_t>,
     std::string,
     std::unordered_map<int64_t, std::string>,
-    bool>
+    bool,
+    std::vector<std::string>>
     GPT2BPEEncoderStatesPybind;
 
 typedef std::tuple<
@@ -25,12 +29,16 @@ typedef std::tuple<
     c10::Dict<std::string, int64_t>,
     std::string,
     c10::Dict<int64_t, std::string>,
-    bool>
+    bool,
+    std::vector<std::string>>
     GPT2BPEEncoderStatesTorchbind;
 
 // Applies regex based pre-tokenization step for GPT-2 BPE tokenizer
 // and returns a list of tokens.
 std::vector<std::string> gpt2_bpe_pre_tokenizer(std::string input);
+
+// Creates regular expression to be used in pre-tokentization step
+std::string get_regular_expression();
 
 // Concatenate a vector of strings to a single string
 std::string concatenate_strings(const std::vector<std::string>& list);
@@ -55,7 +63,9 @@ struct GPT2BPEEncoder : torch::CustomClassHolder {
  private:
   const int64_t inf_;
   // Encode byte into an unicode character.
-  std::vector<std::string> ByteEncode_(std::string token);
+  std::vector<std::string> ByteEncode_(
+      std::string token,
+      bool is_never_split_token);
   int64_t GetBPEMergeRank_(std::string pair);
 
  protected:
@@ -72,20 +82,23 @@ struct GPT2BPEEncoder : torch::CustomClassHolder {
   const c10::Dict<std::string, int64_t> bpe_merge_ranks_;
   const c10::Dict<int64_t, std::string> byte_encoder_;
   const std::string seperator_;
+  const std::vector<std::string> never_split_;
   const bool caching_enabled_;
   explicit GPT2BPEEncoder(
       const c10::Dict<std::string, int64_t>& bpe_encoder,
       const c10::Dict<std::string, int64_t>& bpe_merge_ranks,
       const std::string& seperator,
       const c10::Dict<int64_t, std::string>& byte_encoder,
-      bool caching_enabled = false);
+      bool caching_enabled = false,
+      std::vector<std::string> never_split = {});
 
   TORCHTEXT_API explicit GPT2BPEEncoder(
       const std::unordered_map<std::string, int64_t>& bpe_encoder,
       const std::unordered_map<std::string, int64_t>& bpe_merge_ranks,
       const std::string& seperator,
       const std::unordered_map<int64_t, std::string>& byte_encoder,
-      bool caching_enabled = false);
+      bool caching_enabled = false,
+      std::vector<std::string> never_split = {});
 
   // Encode text into a list of bpe token ids.
   //

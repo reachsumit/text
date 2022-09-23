@@ -171,7 +171,8 @@ PYBIND11_MODULE(_torchtext, m) {
            std::unordered_map<std::string, int64_t>,
            std::string,
            std::unordered_map<int64_t, std::string>,
-           bool>())
+           bool,
+           std::vector<std::string>>())
       .def_property_readonly("bpe_encoder_", &GPT2BPEEncoder::GetBPEEncoder)
       .def_property_readonly(
           "bpe_merge_ranks_", &GPT2BPEEncoder::GetBPEMergeRanks)

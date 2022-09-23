@@ -318,38 +318,67 @@ class TestSequential(TorchtextTestCase):
 
 
 class TestGPT2BPETokenizer(TorchtextTestCase):
-    def _load_tokenizer(self, test_scripting: bool, return_tokens: bool):
+    def _load_tokenizer(self, test_scripting: bool, return_tokens: bool, never_split: Optional[List[str]] = None):
         encoder_json = "gpt2_bpe_encoder.json"
         bpe_vocab = "gpt2_bpe_vocab.bpe"
         tokenizer = transforms.GPT2BPETokenizer(
             encoder_json_path=get_asset_path(encoder_json),
             vocab_bpe_path=get_asset_path(bpe_vocab),
             return_tokens=return_tokens,
+            never_split=never_split,
         )
         if test_scripting:
             tokenizer = torch.jit.script(tokenizer)
         return tokenizer
 
-    def _gpt2_bpe_tokenizer(self, tokenizer):
+    def _gpt2_bpe_tokenizer(self, tokenizer, never_split: Optional[List[str]] = None):
         sample_texts = [
             "Hello World!, how are you?",
             "Hélló  WoŕlḊ¿",
             "Respublica superiorem",
             "Avdija Vršajević în",
+            " \tHi!how're \nU? [UNK]",
+            "hi world [UNK] [CLS]",
+            "testing, [UNK] words! [SEP]",
         ]
-
-        expected_tokens = [
-            ["Hello", "ĠWorld", "!,", "Ġhow", "Ġare", "Ġyou", "?"],
-            ["H", "Ã©", "ll", "Ã³", "Ġ", "ĠWo", "Å", "ķ", "l", "á¸", "Ĭ", "Â", "¿"],
-            ["Res", "public", "a", "Ġsuper", "i", "orem"],
-            ["Av", "d", "ija", "ĠV", "r", "Å¡", "aj", "ev", "i", "Äĩ", "ĠÃ", "®", "n"],
-        ]
-        expected_token_ids = [
-            ["15496", "2159", "28265", "703", "389", "345", "30"],
-            ["39", "2634", "297", "10205", "220", "22173", "129", "243", "75", "41585", "232", "126", "123"],
-            ["4965", "11377", "64", "2208", "72", "29625"],
-            ["7355", "67", "34655", "569", "81", "32790", "1228", "1990", "72", "38325", "6184", "106", "77"],
-        ]
+        if not never_split:
+            expected_tokens = [
+                ["Hello", "ĠWorld", "!,", "Ġhow", "Ġare", "Ġyou", "?"],
+                ["H", "Ã©", "ll", "Ã³", "Ġ", "ĠWo", "Å", "ķ", "l", "á¸", "Ĭ", "Â", "¿"],
+                ["Res", "public", "a", "Ġsuper", "i", "orem"],
+                ["Av", "d", "ija", "ĠV", "r", "Å¡", "aj", "ev", "i", "Äĩ", "ĠÃ", "®", "n"],
+                ["Ġ", "ĉ", "Hi", "!", "how", "'re", "Ġ", "Ċ", "U", "?", "Ġ[", "UN", "K", "]"],
+                ["hi", "Ġworld", "Ġ[", "UN", "K", "]", "Ġ[", "CL", "S", "]"],
+                ["testing", ",", "Ġ[", "UN", "K", "]", "Ġwords", "!", "Ġ[", "SE", "P", "]"],
+            ]
+            expected_token_ids = [
+                ["15496", "2159", "28265", "703", "389", "345", "30"],
+                ["39", "2634", "297", "10205", "220", "22173", "129", "243", "75", "41585", "232", "126", "123"],
+                ["4965", "11377", "64", "2208", "72", "29625"],
+                ["7355", "67", "34655", "569", "81", "32790", "1228", "1990", "72", "38325", "6184", "106", "77"],
+                ["220", "197", "17250", "0", "4919", "821", "220", "198", "52", "30", "685", "4944", "42", "60"],
+                ["5303", "995", "685", "4944", "42", "60", "685", "5097", "50", "60"],
+                ["33407", "11", "685", "4944", "42", "60", "2456", "0", "685", "5188", "47", "60"],
+            ]
+        else:
+            expected_tokens = [
+                ["Hello", "ĠWorld", "!,", "Ġhow", "Ġare", "Ġyou", "?"],
+                ["H", "Ã©", "ll", "Ã³", "Ġ", "ĠWo", "Å", "ķ", "l", "á¸", "Ĭ", "Â", "¿"],
+                ["Res", "public", "a", "Ġsuper", "i", "orem"],
+                ["Av", "d", "ija", "ĠV", "r", "Å¡", "aj", "ev", "i", "Äĩ", "ĠÃ", "®", "n"],
+                ["Ġ", "ĉ", "Hi", "!", "how", "'re", "Ġ", "Ċ", "U", "?", "Ġ[", "UN", "K", "]"],
+                ["hi", "Ġworld", "Ġ[", "UN", "K", "]", "Ġ[", "CL", "S", "]"],
+                ["testing", ",", "Ġ[", "UN", "K", "]", "Ġwords", "!", "Ġ[", "SE", "P", "]"],
+            ]
+            expected_token_ids = [
+                ["15496", "2159", "28265", "703", "389", "345", "30"],
+                ["39", "2634", "297", "10205", "220", "22173", "129", "243", "75", "41585", "232", "126", "123"],
+                ["4965", "11377", "64", "2208", "72", "29625"],
+                ["7355", "67", "34655", "569", "81", "32790", "1228", "1990", "72", "38325", "6184", "106", "77"],
+                ["220", "197", "17250", "0", "4919", "821", "220", "198", "52", "30", "685", "4944", "42", "60"],
+                ["5303", "995", "685", "4944", "42", "60", "685", "5097", "50", "60"],
+                ["33407", "11", "685", "4944", "42", "60", "2456", "0", "685", "5188", "47", "60"],
+            ]
 
         # test batch of sentences
         if tokenizer._return_tokens:
@@ -364,10 +393,13 @@ class TestGPT2BPETokenizer(TorchtextTestCase):
             else:
                 self.assertEqual(tokenizer(txt), expected_token_ids[idx])
 
-    @nested_params([True, False], [True, False])
-    def test_gpt2_bpe_tokenizer(self, test_scripting, return_tokens):
+    @nested_params([True, False], [True, False], [[], None, ["[UNK]", "[CLS]"]])
+    def test_gpt2_bpe_tokenizer(self, test_scripting, return_tokens, never_split):
         """test tokenization on single sentence input as well as batch on sentences"""
-        self._gpt2_bpe_tokenizer(self._load_tokenizer(test_scripting=test_scripting, return_tokens=return_tokens))
+        self._gpt2_bpe_tokenizer(
+            self._load_tokenizer(test_scripting=test_scripting, return_tokens=return_tokens, never_split=never_split),
+            never_split=never_split,
+        )
 
     def test_gpt2_bpe_tokenizer_save_load_pybind(self) -> None:
         tokenizer = self._load_tokenizer(test_scripting=False, return_tokens=False)
